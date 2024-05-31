@@ -2,6 +2,10 @@
 Extract metadata about datasets owned and maintained by DTS
 and publishes the data in another dataset.
 """
+import asyncio
+import aiohttp
+from aiohttp import BasicAuth
+
 from datetime import datetime
 import pytz
 import logging
@@ -107,7 +111,6 @@ def convert_tz(date_str):
 
 def transform(data):
     logger.info("Transforming data")
-    basic = HTTPBasicAuth(username=SO_USER, password=SO_PASS)
 
     # metadata fields to pull
     fields = {
@@ -176,20 +179,44 @@ def transform(data):
             else:
                 filtered_data[fields[field]] = ""
 
-        # Query for getting number of rows
-        if filtered_data["type"] == "dataset":
-            row_count = requests.get(
-                f"https://datahub.austintexas.gov/api/id/{filtered_data['id']}.json?$select=count(*)%20as%20count",
-                auth=basic,
-            )
-            row_count = json.loads(row_count.text)
-            filtered_data["row_count"] = row_count[0]["count"]
-        else:
-            filtered_data["row_count"] = None
-
         output_data.append(filtered_data)
 
     return output_data
+
+
+async def fetch(session, resource_id, auth, semaphore):
+    """
+    Task for fetching the number of rows a dataset using a SoQL query.
+    """
+    url = f"https://datahub.austintexas.gov/resource/{resource_id}.json?$select=count(*) as count"
+    async with semaphore:  # Use semaphore to limit concurrency
+        async with session.get(url, auth=auth) as response:
+            res = await response.json()
+            return {"id": resource_id, "row_count": res[0]["count"]}
+
+
+async def get_row_counts(data):
+    """
+    Get the number of rows in each dataset async.
+    """
+    basic = BasicAuth(SO_USER, SO_PASS)
+    concurrency_limit = 10  # Setting concurrency limit
+    semaphore = asyncio.Semaphore(concurrency_limit)
+
+    async with aiohttp.ClientSession() as session:
+        tasks = []
+        for row in data:
+            if row["type"] == "dataset":
+                tasks.append(fetch(session, row["id"], basic, semaphore))
+
+        results = await asyncio.gather(*tasks)
+
+    for result in results:
+        for row in data:
+            if row["id"] == result["id"]:
+                row["row_count"] = result["row_count"]
+
+    return data
 
 
 def load(soda, data):
@@ -202,6 +229,7 @@ def main():
     client = Socrata(SO_WEB, SO_TOKEN, username=SO_USER, password=SO_PASS, timeout=240)
     data = extract()
     data = transform(data)
+    data = asyncio.run(get_row_counts(data))
     load(client, data)
 
 

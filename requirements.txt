@@ -1,2 +1,5 @@
 sodapy==2.1.*
-pytz
+pytz~=2023.3.post1
+asyncio==3.4.*
+aiohttp==3.9.*
+requests==2.31.*
