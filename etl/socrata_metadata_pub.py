@@ -4,13 +4,12 @@ and publishes the data in another dataset.
 """
 import asyncio
 import aiohttp
-from aiohttp import BasicAuth
-
+from aiohttp import BasicAuth, ClientTimeout
 from datetime import datetime
-import pytz
+import json
 import logging
 import os
-import json
+import pytz
 import requests
 from requests.auth import HTTPBasicAuth
 
@@ -184,15 +183,14 @@ def transform(data):
     return output_data
 
 
-async def fetch(session, resource_id, auth, semaphore):
+async def fetch(session, resource_id, auth):
     """
     Task for fetching the number of rows a dataset using a SoQL query.
     """
     url = f"https://datahub.austintexas.gov/resource/{resource_id}.json?$select=count(*) as count"
-    async with semaphore:  # Use semaphore to limit concurrency
-        async with session.get(url, auth=auth) as response:
-            res = await response.json()
-            return {"id": resource_id, "row_count": res[0]["count"]}
+    async with session.get(url, auth=auth) as response:
+        res = await response.json()
+        return {"id": resource_id, "row_count": res[0]["count"]}
 
 
 async def get_row_counts(data):
@@ -200,14 +198,13 @@ async def get_row_counts(data):
     Get the number of rows in each dataset async.
     """
     basic = BasicAuth(SO_USER, SO_PASS)
-    concurrency_limit = 10  # Setting concurrency limit
-    semaphore = asyncio.Semaphore(concurrency_limit)
+    timeout = ClientTimeout(total=20*60)  # Setting a cap timeout to 20 minutes
 
-    async with aiohttp.ClientSession() as session:
+    async with aiohttp.ClientSession(timeout=timeout) as session:
         tasks = []
         for row in data:
             if row["type"] == "dataset":
-                tasks.append(fetch(session, row["id"], basic, semaphore))
+                tasks.append(fetch(session, row["id"], basic))
 
         results = await asyncio.gather(*tasks)
 
