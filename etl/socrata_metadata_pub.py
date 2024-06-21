@@ -188,7 +188,7 @@ async def fetch(session, resource_id, auth):
     Task for fetching the number of rows a dataset using a SoQL query.
     """
     url = f"https://datahub.austintexas.gov/resource/{resource_id}.json?$select=count(*) as count"
-    async with session.get(url, auth=auth) as response:
+    async with session.get(url, auth=auth, headers={"X-App-Token": SO_TOKEN}) as response:
         res = await response.json()
         return {"id": resource_id, "row_count": res[0]["count"]}
 
